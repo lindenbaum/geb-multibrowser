@@ -1,84 +1,102 @@
 package geb.spock
 
-import geb.*
-import spock.lang.*
+import geb.Browser
+import geb.Configuration
+import geb.ConfigurationLoader
+import spock.lang.Shared
+import spock.lang.Specification
+import spock.lang.Stepwise
 
 abstract class MultiBrowserGebSpec extends Specification {
-    String gebConfEnv = null
-    String gebConfScript = null
+  String gebConfEnv = null
+  String gebConfScript = null
 
-    // Map of geb browsers which can be referenced by name in the spec
-    // THese currently share the same config.  This is not a problem for
-    // my uses, but I can see potential for wanting to configure different
-    // browsers separately
-    @Shared _browsers = createBrowserMap()
-    def currentBrowser
+  private @Shared
+      _browsers = []
+  private @Shared
+      _defaultBrowser = null
+  private def currentBrowser
 
-    def createBrowserMap() {
-        [:].withDefault { new Browser(createConf()) }
+
+  def newBrowser() {
+    def browser = createBrowser()
+    _browsers << browser
+    browser
+  }
+
+  def using(browser, Closure c) {
+    currentBrowser = browser
+    def returnedValue = c.call()
+    currentBrowser = null
+    returnedValue
+  }
+
+  private Browser createBrowser() {
+    new Browser(createConf())
+  }
+
+  private Configuration createConf() {
+    def conf = new ConfigurationLoader(gebConfEnv).getConf(gebConfScript)
+    conf.cacheDriver = false
+    return conf
+  }
+
+  void quitBrowser(Browser browser) {
+    if (browser?.config?.autoClearCookies) {
+      browser?.clearCookiesQuietly()
     }
+    browser?.quit()
+  }
 
-    Configuration createConf() {
-        // Use the standard configured geb driver, but turn off cacheing so
-        // we can run multiple
-        def conf = new ConfigurationLoader(gebConfEnv).getConf(gebConfScript)
-        conf.cacheDriver = false
-        return conf
+  private void resetBrowsers() {
+    _browsers.each { browser ->
+      quitBrowser(browser)
     }
+    quitBrowser(_defaultBrowser)
+    _browsers = []
+    _defaultBrowser = null
+  }
 
-    def withBrowserSession(browser, Closure c) {
-        currentBrowser = browser
-        def returnedValue = c.call()
-        currentBrowser = null
-        returnedValue
+  private Browser defaultBrowser() {
+    if (!_defaultBrowser) {
+      _defaultBrowser = createBrowser()
     }
+    _defaultBrowser
+  }
 
-    void resetBrowsers() {
-        _browsers.each { k, browser ->
-            if (browser.config?.autoClearCookies) {
-                browser.clearCookiesQuietly()
-            }
-            browser.quit()
-        }
-        _browsers = createBrowserMap()
+  def propertyMissing(String name) {
+    if (currentBrowser) {
+      currentBrowser."$name"
+    } else {
+      defaultBrowser()."$name"
     }
+  }
 
-    def propertyMissing(String name) {
-        if(currentBrowser) {
-            return currentBrowser."$name"
-        } else {
-            return _browsers[name]
-        }
+  def propertyMissing(String name, value) {
+    if (currentBrowser) {
+      currentBrowser."$name" = value
+    } else {
+      defaultBrowser()."$name" = value
     }
+  }
 
-    def methodMissing(String name, args) {
-        if(currentBrowser) {
-            return currentBrowser."$name"(*args)
-        } else {
-            def browser = _browsers[name]
-            if(args) {
-                return browser."${args[0]}"(*(args[1..-1]))
-            } else {
-                return browser
-            }
-        }
+  def methodMissing(String name, args) {
+    if (currentBrowser) {
+      currentBrowser."$name"(*args)
+    } else {
+      defaultBrowser()."$name"(*args)
     }
+  }
 
-    def propertyMissing(String name, value) {
-        if(!currentBrowser) throw new IllegalArgumentException("No context for setting property $name")
-        currentBrowser."$name" = value
-    }
+  private isSpecStepwise() {
+    this.class.getAnnotation(Stepwise) != null
+  }
 
-    private isSpecStepwise() {
-        this.class.getAnnotation(Stepwise) != null
-    }
+  def cleanup() {
+    if (!isSpecStepwise()) resetBrowsers()
+  }
 
-    def cleanup() {
-        if (!isSpecStepwise()) resetBrowsers()
-    }
-
-    def cleanupSpec() {
-        if (isSpecStepwise()) resetBrowsers()
-    }
+  def cleanupSpec() {
+    if (isSpecStepwise()) resetBrowsers()
+  }
 }
-
